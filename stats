@@ -1,0 +1,177 @@
+# Parses routine emails in a Gmail account for data.
+# Inputs needed - Username (Line 78), Password (Line 82), Test Accounts if applicable (Line 92)
+
+import pandas as pd
+import email, imaplib
+from datetime import datetime
+from time import time, sleep
+from random import randint
+
+#---------FUNCTION: SKIP TEST ACCOUNTS-------
+
+def skip_testaccounts(testemail_list):
+	for test_account in testemail_list:
+		email_addresses.remove(test_account)
+		
+#---------FUNCTION: PARSE EMAIL SUBJECT------
+
+def parse_subj(varSubject):
+
+	if ("registration request confirmation" in varSubject):  # record individual/company as well as register request datetime
+		investorstats_df.loc[(investorstats_df["email_address"]==address), "registerrequest_Datetime"] = varDatetime
+
+		if ("individual registration request confirmation" in varSubject):
+			investorstats_df.loc[(investorstats_df["email_address"]==address), "company_individual"] = "individual"
+		elif ("company registration request confirmation" in varSubject):
+			investorstats_df.loc[(investorstats_df["email_address"]==address), "company_individual"] = "company"
+				
+	elif ("registration is successful" in varSubject): # record registerSuccess datetime
+		investorstats_df.loc[(investorstats_df["email_address"]==address), "registersuccess_Datetime"] = varDatetime
+
+	elif ("created a new project" in varSubject): # record Project Created by developer
+		investorstats_df.loc[(investorstats_df["email_address"]==address), "developer_investor"] = "developer"
+		varSubject = varSubject.replace("Positive Energy Ltd – you created a new project ", "")
+		projectscreated_List_dev.append(varSubject)
+		projectscreated_Datetimes_dev.append(varDatetime)
+
+	elif("New ‘Join request’ for" in varSubject):	# record Join Request received by developer
+		varSubject = varSubject.replace("Positive Energy Ltd – New ‘Join request’ for ", "")
+		projectsjoinrequests_List_dev.append(varSubject)
+		projectsjoinrequests_Datetimes_dev.append(varDatetime)
+
+	elif (("‘Join request’ approved" in varSubject) and ((investorstats_df.loc[investorstats_df.index[investorstats_df["email_address"]==address], "developer_investor"]=="developer").bool())): # record Join Request approved by developer, second superlong condition is to check if developer
+		varSubject = varSubject.replace("Positive Energy Ltd – ‘Join request’ approved for ", "")
+		projectsjoinapprove_List_dev.append(varSubject)
+		projectsjoinapprove_Datetimes_dev.append(varDatetime)
+
+	elif (("‘Join request’ approved" in varSubject) and ((investorstats_df.loc[investorstats_df.index[investorstats_df["email_address"]==address], "developer_investor"]!="developer").bool())): # record Project Joined by investor
+		varSubject = varSubject.replace("Positive Energy Ltd – ‘Join request’ approved for ", "")
+		projectsjoined_List_inv.append(varSubject)
+		projectsjoined_Datetimes_inv.append(varDatetime)
+
+#----------FUNCTION: LIST TO .CSV CELL-------
+
+def list_to_cell(superlist):
+	for list in superlist:
+		name_of_list = list[0]		# extract name of list which is first item in list, before removing it
+		list.remove(name_of_list)
+		tempStr = ", ".join(list) # convert list to string for .csv
+		investorstats_df.loc[(investorstats_df["email_address"]==address), name_of_list] = tempStr
+
+#----------CREATE DATAFRAME------------------
+
+# create DataFrame with userid and email addresses from database "users.csv"
+user_df = pd.read_csv("users.csv", header=None) 	# "users.csv" has no headers
+userid_list = user_df.iloc[:,0].tolist()	# convert userid column to list
+email_list = user_df.iloc[:,5].tolist()		# convert email column to list
+
+dictionary_for_df = {"email_address": email_list}
+investorstats_df = pd.DataFrame(dictionary_for_df, index=userid_list)	# set userid as index
+investorstats_df.sort_index(inplace=True)	# sort by userid
+
+# add registerRequest and registerSuccess columns
+investorstats_df = investorstats_df.assign(company_individual="", developer_investor="", registerrequest_Datetime="", registersuccess_Datetime="", projectsjoined_List_inv="", projectsjoined_Datetimes_inv="", projectsjoined_Total_inv="", projectscreated_List_dev="", projectscreated_Datetimes_dev="", projectscreated_Total_dev="", projectsjoinrequests_List_dev="", projectsjoinrequests_Datetimes_dev="", projectsjoinapprove_List_dev="", projectsjoinapprove_Datetimes_dev="")
+
+#----------GMAIL LOGIN----------------------
+
+# hardcode username (un)
+un = #INPUT EMAIL USERNAME HERE
+
+# INPUT PASSWORD HERE or obtain password (pw) from .csv file, avoid hardcode
+gmailpassword_csv = pd.read_csv(".csv")
+pw = gmailpassword_csv.loc[0,"password"]
+
+# define IMAP server and login
+server = imaplib.IMAP4_SSL("imap.gmail.com")
+server.login(un,pw)
+server.select('"[Gmail]/All Mail"')	# All Mail includes labelled emails, searching only Inbox does not include non-Inbox labelled emails
+
+#----------MINE DATA---------------------------
+
+email_addresses = investorstats_df.iloc[:,0].tolist()
+test_accounts = [""] # INPUT TEST ACCOUNTS HERE
+skip_testaccounts(test_accounts)	# skip test accounts
+
+email_addresses = email_addresses[1400:] # test/time limit
+start_time = time()
+
+for address in email_addresses:
+	address_number = email_addresses.index(address) + 1
+	
+	resp, searched_emails = server.search(None, "TO", address) 	# returns ids of emails sent to particular email address
+	email_ids = searched_emails[0].split()	# creates list of email ids
+
+	# 3 parts to create 8 lists, update all 3 parts if new list needed
+	# part 1 of 3
+	projectsjoined_List_inv, projectsjoined_Datetimes_inv, projectscreated_List_dev, projectscreated_Datetimes_dev, projectsjoinrequests_List_dev, projectsjoinrequests_Datetimes_dev, projectsjoinapprove_List_dev, projectsjoinapprove_Datetimes_dev = ([] for i in range(8))
+
+	# part 2 of 3
+	names_of_lists = ["projectsjoined_List_inv", "projectsjoined_Datetimes_inv", "projectscreated_List_dev", "projectscreated_Datetimes_dev", "projectsjoinrequests_List_dev", "projectsjoinrequests_Datetimes_dev", "projectsjoinapprove_List_dev", "projectsjoinapprove_Datetimes_dev"]
+
+	# part 3 of 3
+	list_of_lists = [projectsjoined_List_inv, projectsjoined_Datetimes_inv, projectscreated_List_dev, projectscreated_Datetimes_dev, projectsjoinrequests_List_dev, projectsjoinrequests_Datetimes_dev, projectsjoinapprove_List_dev, projectsjoinapprove_Datetimes_dev]
+
+	for list in list_of_lists:	# add list's name into each list for reference later
+		list.append(names_of_lists[list_of_lists.index(list)])
+
+	for id in email_ids:
+		id_number = email_ids.index(id) + 1
+
+		resp, data = server.fetch(id, "(BODY.PEEK[HEADER])")
+		for response_part in data:
+
+			if isinstance(response_part, tuple): # extract key data such as To, Subject, Datetime from email
+				msg = email.message_from_bytes(response_part[1])
+
+				# EMAIL DATETIME
+				varDatetime = (email.utils.parsedate_to_datetime(msg["date"])).strftime("%d/%m/%y %H:%M")
+
+				# EMAIL SUBJECT
+				# email.header.decode_header returns list, [0] get tuple from list, [0] get bytes from tuple, then convert bytes to string
+				try:
+					varSubject = str(((email.header.decode_header(msg["subject"]))[0][0]), "utf-8")
+					parse_subj(varSubject)
+				except:		# some email subjects already str, decoding causes error
+					varSubject = msg["subject"]
+					parse_subj(varSubject)
+
+		print("{} of {} emails processed. {} of {} email addresses being processed. Time elapsed: {}.".format(id_number, len(email_ids), address_number, len(email_addresses), round((time()-start_time)/60, 2)), end="\r", flush=True)
+
+	list_to_cell(list_of_lists)
+
+	# identify as investor if not developer
+	if ((investorstats_df.loc[investorstats_df.index[investorstats_df["email_address"]==address], "developer_investor"]!="developer").bool()):
+		investorstats_df.loc[(investorstats_df["email_address"]==address), "developer_investor"] = "investor"
+		
+	# leave projectsjoined_Total_inv blank if no projects joined
+	if (len(projectsjoined_List_inv) == 0):
+		investorstats_df.loc[(investorstats_df["email_address"]==address), "projectsjoined_Total_inv"] = ""
+
+	else:
+		investorstats_df.loc[(investorstats_df["email_address"]==address), "projectsjoined_Total_inv"] = len(projectsjoined_List_inv)
+	
+	# leave projectsjoined_Total_inv blank if no projects joined
+	if (len(projectscreated_List_dev) == 0):
+		investorstats_df.loc[(investorstats_df["email_address"]==address), "projectscreated_Total_dev"] = ""
+
+	else:
+		investorstats_df.loc[(investorstats_df["email_address"]==address), "projectscreated_Total_dev"] = len(projectscreated_List_dev)
+
+	# spaces to completely overwrite previous progress update
+	print("Completed processing of '{}'.                                                              ".format(address), end="\n", flush=True)
+	sleep(randint(1,3))	# let server rest
+
+# get current datetime
+datetime_now = datetime.now().strftime("%d%b%Y,%H%M")
+
+# save stats_df as .csv file
+investorstats_df.to_csv("investorstats_{}.csv".format(datetime_now))
+print("\ninvestorstats_{}.csv has been created. Time elapsed: {}".format(datetime_now, round((time()-start_time)/60, 2)))
+
+#-------------REFERENCES---------------
+
+# datetime - https://www.programiz.com/python-programming/datetime/current-datetime
+# access Gmail using Python - https://www.geeksforgeeks.org/python-fetch-your-gmail-emails-from-a-particular-user/
+# - https://www.datacourses.com/extracting-data-from-gmail-emails-with-python-470/
+# IMAP search of Gmail using Python - http://techblog.jetabroad.com/2018/07/using-python-3-imaplib-to-connect-to.html
+# Gmail search criteria - https://www.example-code.com/csharp/imap-search-critera.asp
